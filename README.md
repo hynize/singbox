@@ -13,6 +13,7 @@ wget -O argo-hy2 https://raw.githubusercontent.com/hynize/singbox/main/argo-hy2 
 方案 B：Argo + TUIC v5 并行版 (UDP 极速)
 
 适合网络环境较好，追求低延迟、高效率握手的场景。
+
 wget -O argo-tuic https://raw.githubusercontent.com/hynize/singbox/main/argo-tuic && chmod +x argo-tuic && ./argo-tuic
 
 ───
