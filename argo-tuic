@@ -10,7 +10,6 @@ ARCH=$(get_arch)
 init_dirs() { mkdir -p "$BIN_DIR" "$CERT_DIR"; }
 
 download_components() {
-    echo -e "${BLUE}检测架构: $ARCH. 获取组件...${NC}"
     if [ ! -f "$SB_BINARY" ]; then
         local LATEST_SB=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//')
         curl -L "https://github.com/SagerNet/sing-box/releases/download/v${LATEST_SB}/sing-box-${LATEST_SB}-linux-${ARCH}.tar.gz" -o /tmp/sb.tar.gz
@@ -23,7 +22,7 @@ download_components() {
 
 generate_dual_config() {
     local vless_port=$1; local tuic_port=$2; local uuid=$(cat /proc/sys/kernel/random/uuid)
-local vless_path="/$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"; local tuic_pass=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)
+    local vless_path="/$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"; local tuic_pass=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)
     mkdir -p "$WORKDIR" "$CERT_DIR"
     openssl req -x509 -nodes -newkey rsa:2048 -keyout "$CERT_DIR/privkey.pem" -out "$CERT_DIR/cert.pem" -days 3650 -subj "/CN=google.com" 2>/dev/null
     cat > "$CONFIG_FILE" <<EOF
@@ -31,7 +30,7 @@ local vless_path="/$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"; local 
   "log": { "level": "error" },
   "inbounds": [
     { "type": "vless", "tag": "vless-in", "listen": "127.0.0.1", "listen_port": $vless_port, "users": [{ "uuid": "$uuid" }], "transport": { "type": "ws", "path": "$vless_path" } },
-    { "type": "tuic", "tag": "tuic-in", "listen": "0.0.0.0", "listen_port": $tuic_port, "users": [{ "uuid": "$uuid", "password": "$tuic_pass" }], "congestion_control": "bbr", "zero_rtt_handshake": true, "tls": { "enabled": true, "certificate_path": "$CERT_DIR/cert.pem", "key_path": "$CERT_DIR/privkey.pem", "alpn": ["h3"] } }
+    { "type": "tuic", "tag": "tuic-in", "listen": "0.0.0.0", "listen_port": $tuic_port, "users": [{ "uuid": "$uuid", "password": "$tuic_pass" }], "congestion_control": "bbr", "tls": { "enabled": true, "certificate_path": "$CERT_DIR/cert.pem", "key_path": "$CERT_DIR/privkey.pem" } }
   ],
   "outbounds": [{ "type": "direct" }]
 }
@@ -71,24 +70,14 @@ EOF
     sudo systemctl daemon-reload && sudo systemctl enable --now cyber-sb cyber-argo
 }
 
-uninstall() {
-    sudo systemctl disable --now cyber-sb cyber-argo 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/cyber-sb.service /etc/systemd/system/cyber-argo.service
-    sudo systemctl daemon-reload
-    rm -rf "$WORKDIR"
-    echo -e "${GREEN}彻底清理完成。${NC}"
-}
-
 show_results() {
-    echo -e "\n${GREEN}=== 代理部署完成 ===${NC}"
-    local uuid=$(cat "$WORKDIR/uuid.txt"); local path=$(cat "$WORKDIR/vless_path.txt"); local preferred="saas.sin.fan"; local fixed_domain=$(cat "$WORKDIR/argo_domain.txt" 2>/dev/null || echo "")
+    echo -e "\n${GREEN}=== 部署完成 ===${NC}"
+local uuid=$(cat "$WORKDIR/uuid.txt"); local path=$(cat "$WORKDIR/vless_path.txt"); local preferred="saas.sin.fan"; local fixed_domain=$(cat "$WORKDIR/argo_domain.txt" 2>/dev/null || echo "")
     if [ -n "$fixed_domain" ]; then
-        echo -e "${CYAN}[1] Vless + Argo (固定模式)${NC}"
         echo -e "Vless链接: vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${fixed_domain}&host=${fixed_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Fixed"
     else
-        echo -e "${YELLOW}正在获取 Argo 临时隧道域名 (约10s)...${NC}"; sleep 10
+        echo -e "${YELLOW}等待 Argo (8s)...${NC}" && sleep 8
         local raw_domain=$(sudo journalctl -u cyber-argo --no-hostname -n 50 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | tail -1 | sed 's#https://##')
-        echo -e "${CYAN}[1] Vless + Argo (临时模式)${NC}"
         echo -e "Vless链接: vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${raw_domain}&host=${raw_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Temp"
     fi
     local tuic_port=$(cat "$WORKDIR/tuic_port.txt"); local tuic_pass=$(cat "$WORKDIR/tuic_pass.txt"); local ip=$(curl -s ifconfig.me)
@@ -97,21 +86,20 @@ show_results() {
     echo -e "TUIC链接: tuic://${uuid}:${tuic_pass}@${ip}:${tuic_port}?congestion_control=bbr&alpn=h3&sni=google.com&udp_relay_mode=native&allow_insecure=1#TUIC_LXC"
 }
 
+# 菜单
 clear
 echo -e "${CYAN}Small-Hacker LXC Master (Argo+TUIC)${NC}"
-echo "1. 安装服务"; echo "2. 查看链接"; echo "3. 卸载程序"; echo "4. 退出"
-read -p "指令 [1-4]: " choice < /dev/tty
+echo "1. 安装服务"; echo "2. 查看链接"; echo "3. 彻底卸载"; echo "4. 退出"
+read -p "指令: " choice < /dev/tty
 case $choice in
     1)
         init_dirs && download_components
-        echo -e "\n${YELLOW}Argo设置:${NC}"
-        read -p "模式 (1.临时 2.固定): " am < /dev/tty
+        read -p "Argo模式 (1.临时 2.固定): " am < /dev/tty
         if [ "$am" == "2" ]; then read -p "Token: " tk < /dev/tty; read -p "域名: " dm < /dev/tty; echo "$tk" > "$WORKDIR/argo_token.txt"; echo "$dm" > "$WORKDIR/argo_domain.txt"; else rm -f "$WORKDIR/argo_token.txt" "$WORKDIR/argo_domain.txt"; fi
-        echo -e "\n${YELLOW}端口设置 (回车随机):${NC}"
         read -p "Vless本地端口: " vp < /dev/tty; [ -z "$vp" ] && vp=$(shuf -i 10000-20000 -n 1)
         read -p "TUIC外部端口: " tp < /dev/tty; [ -z "$tp" ] && tp=$(shuf -i 20000-60000 -n 1)
         generate_dual_config $vp $tp && setup_services && show_results ;;
-    2) [ -f "$WORKDIR/config.json" ] && show_results || echo "未发现安装。";;
-    3) uninstall ;;
+    2) show_results ;;
+    3) sudo systemctl disable --now cyber-sb cyber-argo 2>/dev/null || true; rm -rf "$WORKDIR"; echo "已卸载。";;
     *) exit 0 ;;
 esac
