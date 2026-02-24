@@ -8,12 +8,12 @@ Small-Hacker LXC Proxy Master
 
 适合网络环境较差、丢包严重，或者需要玩游戏、看 4K 视频的老板。Hy2 具备极强的 UDP 暴力穿透能力。
 
-wget -O argo-hy2.sh https://raw.githubusercontent.com/hynize/singbox/main/argo-hy2 && chmod +x argo-hy2 && ./argo-hy2.sh
+wget -O argo-hy2 https://raw.githubusercontent.com/hynize/singbox/main/argo-hy2 && chmod +x argo-hy2 && ./argo-hy2
 
 方案 B：Argo + TUIC v5 并行版 (UDP 极速)
 
 适合网络环境较好，追求低延迟、高效率握手的场景。
-wget -O argo-tuic.sh https://raw.githubusercontent.com/hynize/singbox/main/argo-tuic && chmod +x argo-tuic && ./argo-tuic.sh
+wget -O argo-tuic https://raw.githubusercontent.com/hynize/singbox/main/argo-tuic && chmod +x argo-tuic && ./argo-tuic
 
 ───
 
