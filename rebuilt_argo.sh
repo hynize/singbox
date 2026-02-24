@@ -109,6 +109,7 @@ EOF
 setup_services() {
     local user_name=$(whoami)
     local vless_port=$(cat "$WORKDIR/vless_port.txt")
+    local argo_token=$(cat "$WORKDIR/argo_token.txt" 2>/dev/null || echo "")
     
     # Sing-box
     sudo tee /etc/systemd/system/cyber-sb.service > /dev/null <<EOF
@@ -125,12 +126,17 @@ WantedBy=multi-user.target
 EOF
 
     # Argo Tunnel
+    local argo_cmd="$CF_BINARY tunnel --url http://127.0.0.1:$vless_port"
+    if [ -n "$argo_token" ]; then
+        argo_cmd="$CF_BINARY tunnel run --token $argo_token"
+    fi
+
     sudo tee /etc/systemd/system/cyber-argo.service > /dev/null <<EOF
 [Unit]
 Description=Cyber Argo Tunnel
 After=network.target
 [Service]
-ExecStart=$CF_BINARY tunnel --url http://127.0.0.1:$vless_port
+ExecStart=$argo_cmd
 Restart=always
 User=$user_name
 WorkingDirectory=$WORKDIR
@@ -156,19 +162,27 @@ uninstall() {
 show_results() {
     echo -e "\n${GREEN}=== 并行环境部署完成 ===${NC}"
     
-    # 1. Argo 结果
-    echo -e "${YELLOW}正在打通 Argo 隧道 (8秒)...${NC}"
-    sleep 8
-    local raw_domain=$(sudo journalctl -u cyber-argo --no-hostname -n 50 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | tail -1 | sed 's#https://##')
     local uuid=$(cat "$WORKDIR/uuid.txt")
     local path=$(cat "$WORKDIR/vless_path.txt")
     local preferred="saas.sin.fan"
+    local fixed_domain=$(cat "$WORKDIR/argo_domain.txt" 2>/dev/null || echo "")
     
-    if [ -n "$raw_domain" ]; then
-        local vless_link="vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${raw_domain}&host=${raw_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Dual"
-        echo -e "\n${CYAN}[1] Vless + Argo (支持优选)${NC}"
-        echo -e "Argo域名: $raw_domain"
+    # 1. Argo 结果
+    if [ -n "$fixed_domain" ]; then
+        echo -e "${CYAN}[1] Vless + Argo (固定隧道)${NC}"
+        local vless_link="vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${fixed_domain}&host=${fixed_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Fixed"
+        echo -e "固定域名: $fixed_domain"
         echo -e "节点链接: $vless_link"
+    else
+        echo -e "${YELLOW}正在打通 Argo 临时隧道 (8秒)...${NC}"
+        sleep 8
+        local raw_domain=$(sudo journalctl -u cyber-argo --no-hostname -n 50 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | tail -1 | sed 's#https://##')
+        if [ -n "$raw_domain" ]; then
+            local vless_link="vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${raw_domain}&host=${raw_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Temp"
+            echo -e "\n${CYAN}[1] Vless + Argo (临时隧道)${NC}"
+            echo -e "临时域名: $raw_domain"
+            echo -e "节点链接: $vless_link"
+        fi
     fi
 
     # 2. Hysteria2 结果
@@ -194,6 +208,19 @@ read -p "指令 [1-4]: " choice
 case $choice in
     1)
         init_dirs && download_components
+        echo -e "\n${YELLOW}Argo 隧道配置:${NC}"
+        echo "1) 临时隧道 (无需配置)"
+        echo "2) 固定隧道 (需输入 Token 和域名)"
+        read -p "选择 [1]: " argo_mode
+        if [ "$argo_mode" == "2" ]; then
+            read -p "请输入 Cloudflare Tunnel Token: " token
+            read -p "请输入对应的固定域名: " domain
+            echo "$token" > "$WORKDIR/argo_token.txt"
+            echo "$domain" > "$WORKDIR/argo_domain.txt"
+        else
+            rm -f "$WORKDIR/argo_token.txt" "$WORKDIR/argo_domain.txt"
+        fi
+
         read -p "Vless 本地端口 (默认随机): " vp
         [ -z "$vp" ] && vp=$(shuf -i 10000-20000 -n 1)
         read -p "Hy2 外部端口 (默认随机): " hp
