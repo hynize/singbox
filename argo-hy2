@@ -31,7 +31,7 @@ generate_dual_config() {
   "log": { "level": "error" },
   "inbounds": [
     { "type": "vless", "tag": "vless-in", "listen": "127.0.0.1", "listen_port": $vless_port, "users": [{ "uuid": "$uuid" }], "transport": { "type": "ws", "path": "$vless_path" } },
-    { "type": "hysteria2", "tag": "hy2-in", "listen": "::", "listen_port": $hy2_port, "users": [{ "password": "$hy2_pass" }], "tls": { "enabled": true, "certificate_path": "$CERT_DIR/cert.pem", "key_path": "$CERT_DIR/privkey.pem", "alpn": ["h3"] } }
+    { "type": "hysteria2", "tag": "hy2-in", "listen": "0.0.0.0", "listen_port": $hy2_port, "users": [{ "password": "$hy2_pass" }], "ignore_client_bandwidth": false, "tls": { "enabled": true, "certificate_path": "$CERT_DIR/cert.pem", "key_path": "$CERT_DIR/privkey.pem", "alpn": ["h3"] } }
   ],
   "outbounds": [{ "type": "direct" }]
 }
@@ -41,9 +41,10 @@ EOF
 
 setup_services() {
     local user_name=$(whoami); local vless_port=$(cat "$WORKDIR/vless_port.txt"); local argo_token=$(cat "$WORKDIR/argo_token.txt" 2>/dev/null || echo "")
+    sudo systemctl stop cyber-sb cyber-argo 2>/dev/null || true
     sudo tee /etc/systemd/system/cyber-sb.service > /dev/null <<EOF
 [Unit]
-Description=Cyber Dual Proxy Service
+Description=Cyber SB
 After=network.target
 [Service]
 ExecStart=$SB_BINARY run -c $CONFIG_FILE
@@ -57,7 +58,7 @@ EOF
     [ -n "$argo_token" ] && argo_cmd="$CF_BINARY tunnel run --token $argo_token"
     sudo tee /etc/systemd/system/cyber-argo.service > /dev/null <<EOF
 [Unit]
-Description=Cyber Argo Tunnel
+Description=Cyber Argo
 After=network.target
 [Service]
 ExecStart=$argo_cmd
@@ -75,38 +76,42 @@ uninstall() {
 sudo rm -f /etc/systemd/system/cyber-sb.service /etc/systemd/system/cyber-argo.service
     sudo systemctl daemon-reload
     rm -rf "$WORKDIR"
-    echo -e "${GREEN}卸载完成。${NC}"
+    echo -e "${GREEN}彻底清理完成。${NC}"
 }
 
 show_results() {
-    echo -e "\n${GREEN}=== 部署完成 ===${NC}"
+    echo -e "\n${GREEN}=== 代理部署完成 ===${NC}"
     local uuid=$(cat "$WORKDIR/uuid.txt"); local path=$(cat "$WORKDIR/vless_path.txt"); local preferred="saas.sin.fan"; local fixed_domain=$(cat "$WORKDIR/argo_domain.txt" 2>/dev/null || echo "")
     if [ -n "$fixed_domain" ]; then
-        echo -e "${CYAN}[1] Vless + Argo (固定隧道)${NC}"
+        echo -e "${CYAN}[1] Vless + Argo (固定模式)${NC}"
         echo -e "Vless链接: vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${fixed_domain}&host=${fixed_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Fixed"
     else
-        echo -e "${YELLOW}等待 Argo (8s)...${NC}" && sleep 8
+        echo -e "${YELLOW}正在获取 Argo 临时隧道域名 (约10s)...${NC}"; sleep 10
         local raw_domain=$(sudo journalctl -u cyber-argo --no-hostname -n 50 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | tail -1 | sed 's#https://##')
-        echo -e "${CYAN}[1] Vless + Argo (临时隧道)${NC}"
+        echo -e "${CYAN}[1] Vless + Argo (临时模式)${NC}"
         echo -e "Vless链接: vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${raw_domain}&host=${raw_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Temp"
     fi
     local hy2_port=$(cat "$WORKDIR/hy2_port.txt"); local hy2_pass=$(cat "$WORKDIR/hy2_pass.txt"); local ip=$(curl -s ifconfig.me)
     echo -e "\n${CYAN}[2] Hysteria2 (UDP直连)${NC}"
+    echo -e "IP: $ip, 端口: $hy2_port"
     echo -e "Hy2链接: hysteria2://${hy2_pass}@${ip}:${hy2_port}?sni=google.com&insecure=1#Hy2_LXC"
 }
 
 clear
 echo -e "${CYAN}Small-Hacker LXC Master (Argo+Hy2)${NC}"
-echo "1. 安装/重置"; echo "2. 查看当前链接"; echo "3. 彻底卸载"; echo "4. 退出"
-read -p "指令: " choice < /dev/tty
+echo "1. 安装服务"; echo "2. 查看链接"; echo "3. 卸载程序"; echo "4. 退出"
+read -p "指令 [1-4]: " choice < /dev/tty
 case $choice in
     1)
         init_dirs && download_components
-        read -p "Argo模式 (1.临时 2.固定): " am < /dev/tty
+        echo -e "\n${YELLOW}Argo设置:${NC}"
+        read -p "模式 (1.临时 2.固定): " am < /dev/tty
         if [ "$am" == "2" ]; then read -p "Token: " tk < /dev/tty; read -p "域名: " dm < /dev/tty; echo "$tk" > "$WORKDIR/argo_token.txt"; echo "$dm" > "$WORKDIR/argo_domain.txt"; else rm -f "$WORKDIR/argo_token.txt" "$WORKDIR/argo_domain.txt"; fi
-        generate_dual_config $(shuf -i 10000-20000 -n 1) $(shuf -i 20000-60000 -n 1)
-        setup_services && show_results ;;
-    2) show_results ;;
+        echo -e "\n${YELLOW}端口设置 (回车随机):${NC}"
+        read -p "Vless本地端口: " vp < /dev/tty; [ -z "$vp" ] && vp=$(shuf -i 10000-20000 -n 1)
+        read -p "Hysteria2外部端口: " hp < /dev/tty; [ -z "$hp" ] && hp=$(shuf -i 20000-60000 -n 1)
+        generate_dual_config $vp $hp && setup_services && show_results ;;
+    2) [ -f "$WORKDIR/config.json" ] && show_results || echo "未发现安装。";;
     3) uninstall ;;
     *) exit 0 ;;
 esac
