@@ -134,3 +134,109 @@ EOF
 
     sudo tee /etc/systemd/system/cyber-argo.service > /dev/null <<EOF
 [Unit]
+Description=Cyber Argo Tunnel
+After=network.target
+[Service]
+ExecStart=$argo_cmd
+Restart=always
+User=$user_name
+WorkingDirectory=$WORKDIR
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now cyber-sb cyber-argo
+}
+
+# 5. 卸载
+uninstall() {
+    echo -e "${RED}正在注销并清理...${NC}"
+    sudo systemctl disable --now cyber-sb cyber-argo 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/cyber-sb.service /etc/systemd/system/cyber-argo.service
+    sudo systemctl daemon-reload
+    rm -rf "$WORKDIR"
+    echo -e "${GREEN}清理完成。${NC}"
+}
+
+# 6. 展示双链接
+show_results() {
+    echo -e "\n${GREEN}=== 并行环境部署完成 ===${NC}"
+    
+    local uuid=$(cat "$WORKDIR/uuid.txt")
+    local path=$(cat "$WORKDIR/vless_path.txt")
+    local preferred="saas.sin.fan"
+    local fixed_domain=$(cat "$WORKDIR/argo_domain.txt" 2>/dev/null || echo "")
+    
+    # 1. Argo 结果
+    if [ -n "$fixed_domain" ]; then
+        echo -e "${CYAN}[1] Vless + Argo (固定隧道)${NC}"
+        local vless_link="vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${fixed_domain}&host=${fixed_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Fixed"
+        echo -e "固定域名: $fixed_domain"
+        echo -e "节点链接: $vless_link"
+    else
+        echo -e "${YELLOW}正在打通 Argo 临时隧道 (8秒)...${NC}"
+        sleep 8
+        local raw_domain=$(sudo journalctl -u cyber-argo --no-hostname -n 50 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | tail -1 | sed 's#https://##')
+        if [ -n "$raw_domain" ]; then
+            local vless_link="vless://${uuid}@${preferred}:443?encryption=none&security=tls&sni=${raw_domain}&host=${raw_domain}&fp=chrome&type=ws&path=$(echo $path | sed 's/\//%2F/g')#Argo_Temp"
+            echo -e "\n${CYAN}[1] Vless + Argo (临时隧道)${NC}"
+            echo -e "临时域名: $raw_domain"
+            echo -e "节点链接: $vless_link"
+        fi
+    fi
+
+    # 2. TUIC 结果
+    local tuic_port=$(cat "$WORKDIR/tuic_port.txt")
+    local tuic_pass=$(cat "$WORKDIR/tuic_pass.txt")
+    local ip=$(curl -s ifconfig.me)
+    local tuic_link="tuic://${uuid}:${tuic_pass}@${ip}:${tuic_port}?congestion_control=bbr&alpn=h3&sni=google.com&udp_relay_mode=native&allow_insecure=1#TUIC_Dual"
+    
+    echo -e "\n${CYAN}[2] TUIC v5 (UDP专精)${NC}"
+    echo -e "IP: $ip, 端口: $tuic_port"
+    echo -e "节点链接: $tuic_link"
+}
+
+# 菜单
+clear
+echo -e "${CYAN}Small-Hacker LXC Proxy Master (Dual Mode)${NC}"
+echo "1. 一键安装并运行 (Argo + TUIC 并行)"
+echo "2. 仅查看当前链接"
+echo "3. 彻底卸载"
+echo "4. 退出"
+read -p "指令 [1-4]: " choice
+
+case $choice in
+    1)
+        init_dirs && download_components
+        echo -e "\n${YELLOW}Argo 隧道配置:${NC}"
+        echo "1) 临时隧道 (无需配置)"
+        echo "2) 固定隧道 (需输入 Token 和域名)"
+        read -p "选择 [1]: " argo_mode
+        if [ "$argo_mode" == "2" ]; then
+            read -p "请输入 Cloudflare Tunnel Token: " token
+            read -p "请输入对应的固定域名: " domain
+            echo "$token" > "$WORKDIR/argo_token.txt"
+            echo "$domain" > "$WORKDIR/argo_domain.txt"
+        else
+            rm -f "$WORKDIR/argo_token.txt" "$WORKDIR/argo_domain.txt"
+        fi
+
+        read -p "Vless 本地端口 (默认随机): " vp
+        [ -z "$vp" ] && vp=$(shuf -i 10000-20000 -n 1)
+        read -p "TUIC 外部端口 (默认随机): " tp
+        [ -z "$tp" ] && tp=$(shuf -i 20000-60000 -n 1)
+        generate_dual_config $vp $tp
+        setup_services
+        show_results
+        ;;
+    2)
+        [ -f "$WORKDIR/vless_port.txt" ] && show_results || echo "未发现已安装的服务。"
+        ;;
+    3)
+        uninstall
+        ;;
+    *)
+        exit 0
+        ;;
+esac
