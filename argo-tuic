@@ -63,6 +63,8 @@ generate_dual_config() {
     local vless_path="/$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"
     local tuic_pass=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)
     
+    mkdir -p "$WORKDIR" "$CERT_DIR"
+    
     if [ ! -f "$CERT_DIR/cert.pem" ]; then
         openssl req -x509 -nodes -newkey rsa:2048 -keyout "$CERT_DIR/privkey.pem" -out "$CERT_DIR/cert.pem" -days 3650 -subj "/CN=google.com" 2>/dev/null
     fi
