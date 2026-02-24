@@ -1,5 +1,5 @@
 #!/bin/bash
-# Small-Hacker LXC Proxy Master - Entry Script
+# Small-Hacker LXC Proxy Master - Entry Script (Fixed for Piping)
 set -e
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -24,7 +24,8 @@ show_menu() {
     echo -e "3. 彻底卸载所有代理服务"
     echo -e "4. 退出"
     echo -e "------------------------------------------------"
-    read -p "请输入选项 [1-4]: " choice
+    # 强制从 /dev/tty 读取键盘输入
+    read -p "请输入选项 [1-4]: " choice < /dev/tty
 }
 
 install_deps
